@@ -19,14 +19,15 @@
 La Vida Es Una Tombola : Web Application Prototype
 """
 
+from os import environ
 from pathlib import Path
 from random import shuffle
 from string import Template
+from itertools import cycle
 
 from starlette.routing import Route
 from starlette.responses import HTMLResponse
 from starlette.applications import Starlette
-from starlette.exceptions import HTTPException
 
 
 RESPONSE_TPL = Template("""
@@ -44,7 +45,7 @@ RESPONSE_TPL = Template("""
 
     <style>
 
-#word {
+#message {
   position: fixed;
   top: 50%;
   left: 50%;
@@ -53,38 +54,63 @@ RESPONSE_TPL = Template("""
   font-family: 'Roboto', sans-serif;
   font-size: 5em;
 }
+
     </style>
   </head>
 
   <body>
-    <span id="word">$word</span>
+    <span id="message">$message</span>
   </body>
 </html>
 """)
 
 WORDS = None
 ITERATOR = None
+SUCCESS = cycle([
+    '&#x1F60B',
+    '&#x1F61B',
+    '&#x1F61C',
+    '&#x1F92A',
+    '&#x1F61D',
+])
 
 
-async def tombola(request):
+def do_shuffle():
+    shuffle(WORDS)
     global ITERATOR
+    ITERATOR = iter(WORDS)
 
-    if WORDS is None:
-        raise HTTPException(400)
 
+async def endpoint_shuffle(request):
+
+    # Check secret
+    secret = request.query_params.get('secret', '')
+    if secret != environ.get('SHUFFLE_SECRET', ''):
+        return HTMLResponse(
+            RESPONSE_TPL.substitute(message='&#x1F928'),
+            status_code=401,
+        )
+
+    do_shuffle()
+    return HTMLResponse(
+        RESPONSE_TPL.substitute(message=next(SUCCESS))
+    )
+
+
+async def endpoint_tombola(request):
     try:
         word = next(ITERATOR)
     except StopIteration:
-        shuffle(WORDS)
-        ITERATOR = iter(WORDS)
+        do_shuffle()
         word = next(ITERATOR)
 
-    return HTMLResponse(RESPONSE_TPL.substitute(word=word))
+    return HTMLResponse(
+        RESPONSE_TPL.substitute(message=word)
+    )
 
 
 def on_load():
     global WORDS
-    global ITERATOR
 
     WORDS = [
         line.title() for line in (
@@ -92,11 +118,12 @@ def on_load():
             Path('words.txt').read_text(encoding='utf-8').strip().splitlines()
         ) if line
     ]
-    ITERATOR = iter(WORDS)
+    do_shuffle()
 
 
 routes = [
-    Route('/', tombola),
+    Route('/', endpoint_tombola),
+    Route('/shuffle', endpoint_shuffle),
 ]
 
 app = Starlette(
